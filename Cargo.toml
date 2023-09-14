@@ -1,7 +1,6 @@
 [package]
 name = "cairo_rlp"
 version = "0.1.0"
-edition = "2023"
 
 [dependencies]
 cairo_lib = { git = "https://github.com/HerodotusDev/cairo-lib.git" }
