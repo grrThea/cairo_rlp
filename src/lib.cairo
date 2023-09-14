@@ -123,6 +123,7 @@
 //     }
 // }
 
+%builtins output
 func main(output_ptr: felt*) -> (output_ptr: felt*) {
     alloc_locals;
 
