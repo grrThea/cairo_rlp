@@ -1,37 +1,49 @@
-FROM ciimage/python:3.9-ci
+FROM ciimage/python:3.9 as base_image
 
-RUN curl -sL https://starkware-third-party.s3.us-east-2.amazonaws.com/build_tools/node-v18.17.0-linux-x64.tar.xz -o node-v18.17.0-linux-x64.tar.xz && \
-    tar -xf node-v18.17.0-linux-x64.tar.xz -C /opt/ && \
-    rm -f node-v18.17.0-linux-x64.tar.xz
+COPY install_deps.sh /app/
+RUN /app/install_deps.sh
 
-ENV PATH="${PATH}:/opt/node-v18.17.0-linux-x64/bin"
+COPY CMakeLists.txt /app/
+COPY src /app/src
+COPY e2e_test /app/e2e_test
 
-COPY ./docker_common_deps.sh /app/
-WORKDIR /app/
-RUN ./docker_common_deps.sh
+# Install Cairo0 for end-to-end test.
+RUN pip install cairo-lang==0.12.0
 
-# Install solc and ganache
-RUN curl https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.6.12+commit.27d51765 -o /usr/local/bin/solc-0.6.12
-RUN echo 'f6cb519b01dabc61cab4c184a3db11aa591d18151e362fcae850e42cffdfb09a /usr/local/bin/solc-0.6.12' | sha256sum --check
-RUN chmod +x /usr/local/bin/solc-0.6.12
-RUN npm install -g --unsafe-perm ganache@7.4.3
+RUN mkdir -p /app/build/Release
 
-COPY . /app
+WORKDIR /app/build/Release
 
-# Build the cairo-lang package.
-RUN bazel build //src/starkware/cairo/lang:create_cairo_lang_package_zip
-RUN build/bazelbin/src/starkware/cairo/lang/create_cairo_lang_package_zip
+RUN cmake ../.. -DCMAKE_BUILD_TYPE=Release
+RUN make -j8
 
-# Build and test all the targets.
-RUN bazel build //...
-RUN bazel test //...
+RUN ctest -V
 
-RUN src/starkware/cairo/lang/package_test/run_test.sh
+# Copy cpu_air_prover and cpu_air_verifier
+RUN ln -s /app/build/Release/src/starkware/main/cpu/cpu_air_prover /bin/cpu_air_prover
+RUN ln -s /app/build/Release/src/starkware/main/cpu/cpu_air_verifier /bin/cpu_air_verifier
 
-# Build the Visual Studio Code extension.
-WORKDIR /app/src/starkware/cairo/lang/ide/vscode-cairo
-RUN npm install -g vsce@1.87.1
-RUN npm install
-RUN vsce package
+# End to end test.
+WORKDIR /app/e2e_test
 
-WORKDIR /app/
+RUN cairo-compile fibonacci.cairo --output fibonacci_compiled.json --proof_mode
+
+RUN cairo-run \
+    --program=fibonacci_compiled.json \
+    --layout=small \
+    --program_input=fibonacci_input.json \
+    --air_public_input=fibonacci_public_input.json \
+    --air_private_input=fibonacci_private_input.json \
+    --trace_file=fibonacci_trace.json \
+    --memory_file=fibonacci_memory.json \
+    --print_output \
+    --proof_mode
+
+RUN cpu_air_prover \
+    --out_file=fibonacci_proof.json \
+    --private_input_file=fibonacci_private_input.json \
+    --public_input_file=fibonacci_public_input.json \
+    --prover_config_file=cpu_air_prover_config.json \
+    --parameter_file=cpu_air_params.json
+
+RUN cpu_air_verifier --in_file=fibonacci_proof.json && echo "Successfully verified example proof."
