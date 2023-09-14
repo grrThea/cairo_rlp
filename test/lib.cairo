@@ -1,4 +1,3 @@
-use debug::PrintTrait;
 use cairo_lib::encoding::rlp::{RLPItem, rlp_decode};
 
 
